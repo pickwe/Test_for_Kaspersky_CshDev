@@ -15,8 +15,7 @@ public sealed class CSharpSourceScanner
 
         foreach (var assignment in tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>())
         {
-            if (!IsCertificateCallback(assignment) || !AlwaysAcceptsCertificate(assignment.Right))
-            {
+            if (!IsCertificateCallback(assignment) || !AlwaysAcceptsCertificate(assignment.Right)){
                 continue;
             }
 
@@ -28,13 +27,27 @@ public sealed class CSharpSourceScanner
                 lineNumber));
         }
 
+        foreach (var creation in tree.GetRoot().DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
+        {
+            if (creation.Type.ToString() != "AesGcm" ||
+                creation.ArgumentList?.Arguments.FirstOrDefault()?.Expression is not ArrayCreationExpressionSyntax){
+                continue;
+            }
+
+            var lineNumber = creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            findings.Add(new ScanFinding(
+                "CRYPTO001",
+                "An encryption key is written directly in source code.",
+                filePath,
+                lineNumber));
+        }
+
         return findings;
     }
 
     private static bool IsCertificateCallback(AssignmentExpressionSyntax assignment)
     {
-        var name = assignment.Left switch
-        {
+        var name = assignment.Left switch {
             MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
             IdentifierNameSyntax identifier when assignment.Parent is InitializerExpressionSyntax =>
                 identifier.Identifier.ValueText,

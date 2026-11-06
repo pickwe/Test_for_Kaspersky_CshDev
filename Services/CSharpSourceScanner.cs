@@ -15,7 +15,8 @@ public sealed class CSharpSourceScanner
 
         foreach (var assignment in tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>())
         {
-            if (!IsCertificateCallback(assignment) || !AlwaysAcceptsCertificate(assignment.Right)){
+            if (!IsCertificateCallback(assignment) || !AlwaysAcceptsCertificate(assignment.Right))
+            {
                 continue;
             }
 
@@ -29,8 +30,10 @@ public sealed class CSharpSourceScanner
 
         foreach (var creation in tree.GetRoot().DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
         {
-            if (creation.Type.ToString() != "AesGcm" ||
-                creation.ArgumentList?.Arguments.FirstOrDefault()?.Expression is not ArrayCreationExpressionSyntax){
+            var key = creation.ArgumentList?.Arguments.FirstOrDefault()?.Expression;
+            if (!IsAesGcmType(creation.Type) ||
+                key is not (ArrayCreationExpressionSyntax or ImplicitArrayCreationExpressionSyntax))
+            {
                 continue;
             }
 
@@ -45,9 +48,17 @@ public sealed class CSharpSourceScanner
         return findings;
     }
 
+    private static bool IsAesGcmType(TypeSyntax type) => type switch
+    {
+        IdentifierNameSyntax name => name.Identifier.ValueText == "AesGcm",
+        QualifiedNameSyntax name => name.Right.Identifier.ValueText == "AesGcm",
+        _ => false
+    };
+
     private static bool IsCertificateCallback(AssignmentExpressionSyntax assignment)
     {
-        var name = assignment.Left switch {
+        var name = assignment.Left switch
+        {
             MemberAccessExpressionSyntax member => member.Name.Identifier.ValueText,
             IdentifierNameSyntax identifier when assignment.Parent is InitializerExpressionSyntax =>
                 identifier.Identifier.ValueText,

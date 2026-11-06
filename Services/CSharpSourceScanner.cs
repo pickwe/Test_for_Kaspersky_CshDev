@@ -30,28 +30,55 @@ public sealed class CSharpSourceScanner
 
         foreach (var creation in tree.GetRoot().DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
         {
-            var key = creation.ArgumentList?.Arguments.FirstOrDefault()?.Expression;
-            if (!IsAesGcmType(creation.Type) ||
-                key is not (ArrayCreationExpressionSyntax or ImplicitArrayCreationExpressionSyntax))
+            var firstArgument = creation.ArgumentList?.Arguments.FirstOrDefault()?.Expression;
+
+            if (HasTypeName(creation.Type, "AesGcm") &&
+                firstArgument is ArrayCreationExpressionSyntax or ImplicitArrayCreationExpressionSyntax)
             {
-                continue;
+                var lineNumber = creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                findings.Add(new ScanFinding(
+                    "CRYPTO001",
+                    "An encryption key is written directly in source code.",
+                    filePath,
+                    lineNumber));
             }
 
-            var lineNumber = creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-            findings.Add(new ScanFinding(
-                "CRYPTO001",
-                "An encryption key is written directly in source code.",
-                filePath,
-                lineNumber));
+            if (HasTypeName(creation.Type, "SqlCommand") && IsDynamicSql(firstArgument))
+            {
+                var lineNumber = creation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                findings.Add(new ScanFinding(
+                    "SQL001",
+                    "A SQL query is built from dynamic text; use parameters instead.",
+                    filePath,
+                    lineNumber));
+            }
         }
 
         return findings;
     }
 
-    private static bool IsAesGcmType(TypeSyntax type) => type switch
+    private static bool HasTypeName(TypeSyntax type, string expectedName) => type switch
     {
-        IdentifierNameSyntax name => name.Identifier.ValueText == "AesGcm",
-        QualifiedNameSyntax name => name.Right.Identifier.ValueText == "AesGcm",
+        IdentifierNameSyntax name => name.Identifier.ValueText == expectedName,
+        QualifiedNameSyntax name => name.Right.Identifier.ValueText == expectedName,
+        _ => false
+    };
+
+    private static bool IsDynamicSql(ExpressionSyntax? expression) => expression switch
+    {
+        InterpolatedStringExpressionSyntax text => text.Contents.OfType<InterpolationSyntax>()
+            .Any(part => part.Expression is IdentifierNameSyntax),
+        BinaryExpressionSyntax addition when addition.IsKind(SyntaxKind.AddExpression) =>
+            !IsConstantText(addition) && IsConstantText(addition.Left),
+        _ => false
+    };
+
+    private static bool IsConstantText(ExpressionSyntax expression) => expression switch
+    {
+        LiteralExpressionSyntax text => text.IsKind(SyntaxKind.StringLiteralExpression),
+        BinaryExpressionSyntax addition when addition.IsKind(SyntaxKind.AddExpression) =>
+            IsConstantText(addition.Left) && IsConstantText(addition.Right),
+        ParenthesizedExpressionSyntax parenthesized => IsConstantText(parenthesized.Expression),
         _ => false
     };
 

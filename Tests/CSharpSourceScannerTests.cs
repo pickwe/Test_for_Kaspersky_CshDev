@@ -95,4 +95,45 @@ public sealed class CSharpSourceScannerTests
 
         Assert.AreEqual(0, findings.Count);
     }
+
+    [TestMethod]
+    public void FindsInterpolatedSqlQuery()
+    {
+        const string source = """
+            var command = new SqlCommand(
+                $"SELECT * FROM Users WHERE Name = '{name}'", connection);
+            """;
+
+        var findings = new CSharpSourceScanner().Scan("Users.cs", source);
+
+        Assert.AreEqual(1, findings.Count);
+        Assert.AreEqual(new ScanFinding(
+            "SQL001", "A SQL query is built from dynamic text; use parameters instead.",
+            "Users.cs", 1), findings[0]);
+    }
+
+    [TestMethod]
+    public void FindsConcatenatedSqlQueryWithQualifiedType()
+    {
+        const string source = "var command = new System.Data.SqlClient.SqlCommand(\"SELECT * FROM Users WHERE Id = \" + userId, connection);";
+
+        var findings = new CSharpSourceScanner().Scan("Users.cs", source);
+
+        Assert.AreEqual(1, findings.Count);
+        Assert.AreEqual("SQL001", findings[0].RuleId);
+    }
+
+    [TestMethod]
+    public void IgnoresParameterizedAndConstantSqlQueries()
+    {
+        const string source = """
+            var safe = new SqlCommand("SELECT * FROM Users WHERE Id = @id", connection);
+            safe.Parameters.AddWithValue("@id", userId);
+            var constant = new SqlCommand("SELECT * " + "FROM Users", connection);
+            """;
+
+        var findings = new CSharpSourceScanner().Scan("SafeSql.cs", source);
+
+        Assert.AreEqual(0, findings.Count);
+    }
 }

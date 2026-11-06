@@ -7,4 +7,9 @@
     <RootNamespace>VulnerabilityTracker</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
+    <Content Remove="Tests/**" />
+  </ItemGroup>
+
 </Project>

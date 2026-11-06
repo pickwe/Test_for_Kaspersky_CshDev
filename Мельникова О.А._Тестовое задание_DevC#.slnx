@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="Мельникова О.А._Тестовое задание_DevC#.csproj" />
+  <Project Path="Tests/VulnerabilityTracker.Tests.csproj" />
 </Solution>

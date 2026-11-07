@@ -8,13 +8,17 @@ public sealed record ScanFinding(string RuleId, string Description, string FileP
 
 public sealed class CSharpSourceScanner
 {
-    public IReadOnlyList<ScanFinding> Scan(string filePath, string sourceCode)
+    public IReadOnlyList<ScanFinding> Scan(
+        string filePath, string sourceCode, CancellationToken cancellationToken = default)
     {
-        var tree = CSharpSyntaxTree.ParseText(sourceCode, path: filePath);
+        var tree = CSharpSyntaxTree.ParseText(
+            sourceCode, path: filePath, cancellationToken: cancellationToken);
+        var root = tree.GetRoot(cancellationToken);
         var findings = new List<ScanFinding>();
 
-        foreach (var assignment in tree.GetRoot().DescendantNodes().OfType<AssignmentExpressionSyntax>())
+        foreach (var assignment in root.DescendantNodes().OfType<AssignmentExpressionSyntax>())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!IsCertificateCallback(assignment) || !AlwaysAcceptsCertificate(assignment.Right))
             {
                 continue;
@@ -28,8 +32,9 @@ public sealed class CSharpSourceScanner
                 lineNumber));
         }
 
-        foreach (var creation in tree.GetRoot().DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
+        foreach (var creation in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var firstArgument = creation.ArgumentList?.Arguments.FirstOrDefault()?.Expression;
 
             if (HasTypeName(creation.Type, "AesGcm") &&
@@ -54,15 +59,16 @@ public sealed class CSharpSourceScanner
             }
         }
 
-        var formatterVariables = tree.GetRoot().DescendantNodes()
+        var formatterVariables = root.DescendantNodes()
             .OfType<VariableDeclaratorSyntax>()
             .Where(variable => variable.Initializer?.Value is ObjectCreationExpressionSyntax creation &&
                 HasTypeName(creation.Type, "BinaryFormatter"))
             .Select(variable => variable.Identifier.ValueText)
             .ToHashSet(StringComparer.Ordinal);
 
-        foreach (var invocation in tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
+        foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (invocation.Expression is not MemberAccessExpressionSyntax method ||
                 method.Name.Identifier.ValueText != "Deserialize")
             {
@@ -87,6 +93,7 @@ public sealed class CSharpSourceScanner
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         return findings;
     }
 

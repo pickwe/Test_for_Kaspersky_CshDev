@@ -13,7 +13,7 @@ public sealed class RepositoryScanner(
         foreach (var file in files)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            findings.AddRange(sourceScanner.Scan(file.Path, file.Content));
+            findings.AddRange(sourceScanner.Scan(file.Path, file.Content, cancellationToken));
         }
 
         return findings;

@@ -12,23 +12,51 @@ public sealed class ScanJobRunner(
     private readonly Channel<(Guid Id, string RepositoryUrl)> _queue =
         Channel.CreateUnbounded<(Guid, string)>();
     private readonly CancellationTokenSource _stopping = new();
+    private readonly Dictionary<Guid, CancellationTokenSource> _scanCancellations = [];
+    // Prevents cancellation and disposal of the same token at the same time.
+    private readonly object _gate = new();
     private Task[] _workers = [];
 
     public Guid StartScan(string repositoryUrl)
     {
-        if (_stopping.IsCancellationRequested)
+        lock (_gate)
         {
-            throw new InvalidOperationException("The scan service is stopping.");
-        }
+            if (_stopping.IsCancellationRequested)
+            {
+                throw new InvalidOperationException("The scan service is stopping.");
+            }
 
-        var job = store.Create();
-        if (!_queue.Writer.TryWrite((job.Id, repositoryUrl)))
+            var job = store.Create();
+            _scanCancellations[job.Id] = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token);
+            if (!_queue.Writer.TryWrite((job.Id, repositoryUrl)))
+            {
+                _scanCancellations.Remove(job.Id, out var cancellation);
+                cancellation?.Dispose();
+                store.Fail(job.Id, "Scan could not be queued.");
+                throw new InvalidOperationException("The scan queue is closed.");
+            }
+
+            return job.Id;
+        }
+    }
+
+    public bool CancelScan(Guid id, out DateTimeOffset attemptedAt)
+    {
+        lock (_gate)
         {
-            store.Fail(job.Id, "Scan could not be queued.");
-            throw new InvalidOperationException("The scan queue is closed.");
-        }
+            attemptedAt = DateTimeOffset.UtcNow;
+            if (!store.Cancel(id))
+            {
+                return false;
+            }
 
-        return job.Id;
+            if (_scanCancellations.TryGetValue(id, out var cancellation))
+            {
+                cancellation.Cancel();
+            }
+
+            return true;
+        }
     }
 
     private async Task RunWorkerAsync(CancellationToken cancellationToken)
@@ -37,12 +65,27 @@ public sealed class ScanJobRunner(
         {
             await foreach (var (id, repositoryUrl) in _queue.Reader.ReadAllAsync(cancellationToken))
             {
-                if (!store.Start(id))
+                CancellationToken scanToken;
+                lock (_gate)
                 {
-                    continue;
+                    scanToken = _scanCancellations[id].Token;
                 }
 
-                await ProcessScanAsync(id, repositoryUrl, cancellationToken);
+                try
+                {
+                    if (store.Start(id))
+                    {
+                        await ProcessScanAsync(id, repositoryUrl, scanToken);
+                    }
+                }
+                finally
+                {
+                    lock (_gate)
+                    {
+                        _scanCancellations.Remove(id, out var cancellation);
+                        cancellation?.Dispose();
+                    }
+                }
             }
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
@@ -58,9 +101,13 @@ public sealed class ScanJobRunner(
             var findings = await scanner.ScanAsync(repositoryUrl, cancellationToken);
             store.Complete(id, findings);
         }
-        catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            store.Fail(id, "Scan stopped.");
+            if (_stopping.IsCancellationRequested)
+            {
+                store.Fail(id, "Scan stopped.");
+            }
+            // A user-canceled scan already has the Canceled status.
         }
         catch (Exception exception)
         {
@@ -87,10 +134,26 @@ public sealed class ScanJobRunner(
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        _queue.Writer.TryComplete();
-        _stopping.Cancel();
+        lock (_gate)
+        {
+            _queue.Writer.TryComplete();
+            _stopping.Cancel();
+        }
+
         await Task.WhenAll(_workers).WaitAsync(cancellationToken);
     }
 
-    public void Dispose() => _stopping.Dispose();
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            foreach (var cancellation in _scanCancellations.Values)
+            {
+                cancellation.Dispose();
+            }
+
+            _scanCancellations.Clear();
+            _stopping.Dispose();
+        }
+    }
 }

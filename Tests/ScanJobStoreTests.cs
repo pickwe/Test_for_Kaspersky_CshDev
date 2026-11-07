@@ -39,4 +39,19 @@ public sealed class ScanJobStoreTests
         Assert.IsTrue(store.TryGet(queued.Id, out var unchanged));
         Assert.AreEqual(ScanStatus.Queued, unchanged!.Status);
     }
+
+    [TestMethod]
+    public void CanceledJobCannotStartOrComplete()
+    {
+        var store = new ScanJobStore();
+        var queued = store.Create();
+
+        Assert.IsTrue(store.Cancel(queued.Id));
+        Assert.IsFalse(store.Cancel(queued.Id));
+        Assert.IsFalse(store.Start(queued.Id));
+        Assert.IsFalse(store.Complete(queued.Id, []));
+        Assert.IsTrue(store.TryGet(queued.Id, out var canceled));
+        Assert.AreEqual(ScanStatus.Canceled, canceled!.Status);
+        Assert.IsTrue(canceled.StatusChangedAt >= queued.StatusChangedAt);
+    }
 }

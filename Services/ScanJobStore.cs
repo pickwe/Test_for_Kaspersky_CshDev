@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace VulnerabilityTracker.Services;
 
-public enum ScanStatus { Queued, Running, Completed, Failed }
+public enum ScanStatus { Queued, Running, Completed, Failed, Canceled }
 
 public sealed record ScanJob(
     Guid Id,
@@ -31,6 +31,9 @@ public sealed class ScanJobStore
 
     public bool Fail(Guid id, string error) =>
         Update(id, [ScanStatus.Queued, ScanStatus.Running], ScanStatus.Failed, null, error);
+
+    public bool Cancel(Guid id) =>
+        Update(id, [ScanStatus.Queued, ScanStatus.Running], ScanStatus.Canceled, null, null);
 
     private bool Update(Guid id, ScanStatus[] allowedStatuses, ScanStatus status,
         IReadOnlyList<ScanFinding>? result, string? error)

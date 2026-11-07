@@ -200,4 +200,14 @@ public sealed class CSharpSourceScannerTests
 
         Assert.AreEqual(0, findings.Count);
     }
+
+    [TestMethod]
+    public void HonorsCancellationBeforeParsing()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.ThrowsException<OperationCanceledException>(() =>
+            new CSharpSourceScanner().Scan("Code.cs", "class Code { }", cancellation.Token));
+    }
 }

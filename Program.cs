@@ -97,4 +97,20 @@ app.MapGet("/api/scans/{id}", (string id, ScanJobStore store) =>
         job.Id, job.Status.ToString(), job.StatusChangedAt, result, error));
 });
 
+app.MapDelete("/api/scans/{id}", (string id, ScanJobRunner runner, ScanJobStore store) =>
+{
+    if (!Guid.TryParse(id, out var scanId))
+    {
+        return Results.BadRequest(new { error = "Id must be a valid GUID." });
+    }
+
+    if (!store.TryGet(scanId, out _))
+    {
+        return Results.NotFound();
+    }
+
+    var canceled = runner.CancelScan(scanId, out var attemptedAt);
+    return Results.Ok(new CancelScanResponse(scanId, canceled, attemptedAt));
+});
+
 app.Run();

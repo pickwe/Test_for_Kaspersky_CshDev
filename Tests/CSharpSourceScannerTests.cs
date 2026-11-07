@@ -124,12 +124,35 @@ public sealed class CSharpSourceScannerTests
     }
 
     [TestMethod]
+    public void FindsInterpolatedSqlQueryWithPropertyAccess()
+    {
+        const string source = "var command = new SqlCommand($\"SELECT * FROM Users WHERE Id = {request.UserId}\", connection);";
+
+        var findings = new CSharpSourceScanner().Scan("Users.cs", source);
+
+        Assert.AreEqual(1, findings.Count);
+        Assert.AreEqual("SQL001", findings[0].RuleId);
+    }
+
+    [TestMethod]
+    public void FindsConcatenatedSqlQueryWithVariableOnLeft()
+    {
+        const string source = "var command = new SqlCommand(userInput + \" FROM Users\", connection);";
+
+        var findings = new CSharpSourceScanner().Scan("Users.cs", source);
+
+        Assert.AreEqual(1, findings.Count);
+        Assert.AreEqual("SQL001", findings[0].RuleId);
+    }
+
+    [TestMethod]
     public void IgnoresParameterizedAndConstantSqlQueries()
     {
         const string source = """
             var safe = new SqlCommand("SELECT * FROM Users WHERE Id = @id", connection);
             safe.Parameters.AddWithValue("@id", userId);
             var constant = new SqlCommand("SELECT * " + "FROM Users", connection);
+            var constantInterpolation = new SqlCommand($"SELECT {1} FROM Users", connection);
             """;
 
         var findings = new CSharpSourceScanner().Scan("SafeSql.cs", source);

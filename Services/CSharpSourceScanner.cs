@@ -100,9 +100,10 @@ public sealed class CSharpSourceScanner
     private static bool IsDynamicSql(ExpressionSyntax? expression) => expression switch
     {
         InterpolatedStringExpressionSyntax text => text.Contents.OfType<InterpolationSyntax>()
-            .Any(part => part.Expression is IdentifierNameSyntax),
+            .Any(part => part.Expression is not LiteralExpressionSyntax &&
+                !IsConstantText(part.Expression)),
         BinaryExpressionSyntax addition when addition.IsKind(SyntaxKind.AddExpression) =>
-            !IsConstantText(addition) && IsConstantText(addition.Left),
+            !IsConstantText(addition),
         _ => false
     };
 

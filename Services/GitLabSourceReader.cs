@@ -21,6 +21,19 @@ public sealed class GitLabSourceReader : IDisposable
         _client = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false });
     }
 
+    public static bool IsSupportedUrl(string? repositoryUrl)
+    {
+        try
+        {
+            GetProjectPath(repositoryUrl);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
     public async Task<IReadOnlyList<SourceFile>> ReadAsync(
         string repositoryUrl, CancellationToken cancellationToken = default)
     {
@@ -109,7 +122,7 @@ public sealed class GitLabSourceReader : IDisposable
         return buffer.ToArray();
     }
 
-    private static string GetProjectPath(string repositoryUrl)
+    private static string GetProjectPath(string? repositoryUrl)
     {
         if (!Uri.TryCreate(repositoryUrl, UriKind.Absolute, out var uri) ||
             uri.Scheme != Uri.UriSchemeHttps ||

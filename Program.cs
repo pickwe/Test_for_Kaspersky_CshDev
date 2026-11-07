@@ -3,6 +3,7 @@ using VulnerabilityTracker.Contracts;
 using VulnerabilityTracker.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddProblemDetails();
 
 builder.Services.AddSingleton<VulnerabilityStore>();
 builder.Services.AddSingleton(_ => new GitLabSourceReader());
@@ -33,6 +34,7 @@ app.Use(async (context, next) =>
             Stopwatch.GetElapsedTime(started).TotalMilliseconds);
     }
 });
+app.UseExceptionHandler();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
@@ -58,14 +60,14 @@ app.MapGet("/api/vulnerabilities/{id}", (string id, VulnerabilityStore store) =>
         : Results.NotFound();
 });
 
-app.MapPost("/api/scans", (CreateScanRequest request, ScanJobRunner runner) =>
+app.MapPost("/api/scans", (CreateScanRequest? request, ScanJobRunner runner) =>
 {
-    if (!GitLabSourceReader.IsSupportedUrl(request.RepositoryUrl))
+    if (!GitLabSourceReader.IsSupportedUrl(request?.RepositoryUrl))
     {
         return Results.BadRequest(new { error = "Use an HTTPS URL of a public gitlab.com project." });
     }
 
-    var id = runner.StartScan(request.RepositoryUrl);
+    var id = runner.StartScan(request!.RepositoryUrl);
     return Results.Accepted($"/api/scans/{id}", new CreateScanResponse(id));
 });
 

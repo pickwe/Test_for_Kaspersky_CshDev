@@ -45,7 +45,29 @@ app.MapPost("/api/scans", (CreateScanRequest request, ScanJobRunner runner) =>
     }
 
     var id = runner.StartScan(request.RepositoryUrl);
-    return Results.Accepted(value: new CreateScanResponse(id));
+    return Results.Accepted($"/api/scans/{id}", new CreateScanResponse(id));
+});
+
+app.MapGet("/api/scans/{id}", (string id, ScanJobStore store) =>
+{
+    if (!Guid.TryParse(id, out var scanId))
+    {
+        return Results.BadRequest(new { error = "Id must be a valid GUID." });
+    }
+
+    if (!store.TryGet(scanId, out var job))
+    {
+        return Results.NotFound();
+    }
+
+    var result = job!.Status == ScanStatus.Completed
+        ? job.Result?.Select(finding => new ScanFindingResponse(
+            finding.RuleId, finding.Description, finding.FilePath, finding.LineNumber)).ToArray()
+        : null;
+    var error = job.Status == ScanStatus.Failed ? job.Error : null;
+
+    return Results.Ok(new ScanJobResponse(
+        job.Id, job.Status.ToString(), job.StatusChangedAt, result, error));
 });
 
 app.Run();

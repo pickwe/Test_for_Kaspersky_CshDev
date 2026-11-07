@@ -33,8 +33,8 @@ public sealed class ScanJobRunner(
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Scan {ScanId} failed", id);
             store.Fail(id, "Scan failed.");
+            logger.LogError(exception, "Scan {ScanId} failed", id);
         }
     }
 

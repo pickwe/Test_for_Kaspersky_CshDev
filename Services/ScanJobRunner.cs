@@ -1,26 +1,57 @@
+using System.Threading.Channels;
+
 namespace VulnerabilityTracker.Services;
 
 public sealed class ScanJobRunner(
     RepositoryScanner scanner,
     ScanJobStore store,
-    ILogger<ScanJobRunner> logger) : IHostedService, IDisposable
+    ILogger<ScanJobRunner> logger,
+    int maxParallelScans = 2) : IHostedService, IDisposable
 {
+    // Each worker takes one scan at a time from this shared queue.
+    private readonly Channel<(Guid Id, string RepositoryUrl)> _queue =
+        Channel.CreateUnbounded<(Guid, string)>();
     private readonly CancellationTokenSource _stopping = new();
-    private readonly List<Task> _tasks = [];
+    private Task[] _workers = [];
 
     public Guid StartScan(string repositoryUrl)
     {
-        var job = store.Create();
-        lock (_tasks)
+        if (_stopping.IsCancellationRequested)
         {
-            _tasks.RemoveAll(task => task.IsCompleted);
-            _tasks.Add(Task.Run(() => RunAsync(job.Id, repositoryUrl, _stopping.Token)));
+            throw new InvalidOperationException("The scan service is stopping.");
+        }
+
+        var job = store.Create();
+        if (!_queue.Writer.TryWrite((job.Id, repositoryUrl)))
+        {
+            store.Fail(job.Id, "Scan could not be queued.");
+            throw new InvalidOperationException("The scan queue is closed.");
         }
 
         return job.Id;
     }
 
-    private async Task RunAsync(Guid id, string repositoryUrl, CancellationToken cancellationToken)
+    private async Task RunWorkerAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var (id, repositoryUrl) in _queue.Reader.ReadAllAsync(cancellationToken))
+            {
+                if (!store.Start(id))
+                {
+                    continue;
+                }
+
+                await ProcessScanAsync(id, repositoryUrl, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
+        {
+            // Stopping the service also stops workers waiting for another scan.
+        }
+    }
+
+    private async Task ProcessScanAsync(Guid id, string repositoryUrl, CancellationToken cancellationToken)
     {
         try
         {
@@ -38,18 +69,27 @@ public sealed class ScanJobRunner(
         }
     }
 
-    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (maxParallelScans < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxParallelScans), "Must be at least 1.");
+        }
+
+        _workers = new Task[maxParallelScans];
+        for (var index = 0; index < _workers.Length; index++)
+        {
+            _workers[index] = Task.Run(() => RunWorkerAsync(_stopping.Token));
+        }
+
+        return Task.CompletedTask;
+    }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        _queue.Writer.TryComplete();
         _stopping.Cancel();
-        Task[] tasks;
-        lock (_tasks)
-        {
-            tasks = _tasks.ToArray();
-        }
-
-        await Task.WhenAll(tasks).WaitAsync(cancellationToken);
+        await Task.WhenAll(_workers).WaitAsync(cancellationToken);
     }
 
     public void Dispose() => _stopping.Dispose();

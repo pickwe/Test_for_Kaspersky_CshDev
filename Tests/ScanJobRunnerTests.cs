@@ -68,6 +68,59 @@ public sealed class ScanJobRunnerTests
         await runner.StopAsync(CancellationToken.None);
     }
 
+    [TestMethod]
+    public async Task StartsQueuedScanWhenWorkerBecomesAvailable()
+    {
+        var firstStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new FakeHandler(async (request, cancellationToken) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/repository/tree"))
+            {
+                if (request.RequestUri.AbsoluteUri.Contains("team%2Ffirst", StringComparison.Ordinal))
+                {
+                    firstStarted.TrySetResult(true);
+                    await releaseFirst.Task.WaitAsync(cancellationToken);
+                }
+                else
+                {
+                    secondStarted.TrySetResult(true);
+                }
+            }
+
+            return Ok("[]");
+        });
+        using var reader = new GitLabSourceReader(handler);
+        var store = new ScanJobStore();
+        using var runner = new ScanJobRunner(
+            new RepositoryScanner(reader, new CSharpSourceScanner()),
+            store, NullLogger<ScanJobRunner>.Instance, maxParallelScans: 1);
+        await runner.StartAsync(CancellationToken.None);
+
+        try
+        {
+            var first = runner.StartScan("https://gitlab.com/team/first");
+            await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var second = runner.StartScan("https://gitlab.com/team/second");
+
+            Assert.IsTrue(store.TryGet(second, out var queued));
+            Assert.AreEqual(ScanStatus.Queued, queued!.Status);
+            Assert.IsFalse(secondStarted.Task.IsCompleted);
+
+            releaseFirst.SetResult(true);
+            await WaitForStatusAsync(store, first, ScanStatus.Completed);
+            await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var completed = await WaitForStatusAsync(store, second, ScanStatus.Completed);
+            Assert.IsTrue(completed.StatusChangedAt >= queued.StatusChangedAt);
+        }
+        finally
+        {
+            releaseFirst.TrySetResult(true);
+            await runner.StopAsync(CancellationToken.None);
+        }
+    }
+
     private static async Task<ScanJob> WaitForStatusAsync(
         ScanJobStore store, Guid id, ScanStatus expected)
     {

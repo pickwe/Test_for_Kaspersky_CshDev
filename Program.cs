@@ -10,7 +10,11 @@ builder.Services.AddSingleton(_ => new GitLabSourceReader());
 builder.Services.AddSingleton<CSharpSourceScanner>();
 builder.Services.AddSingleton<RepositoryScanner>();
 builder.Services.AddSingleton<ScanJobStore>();
-builder.Services.AddSingleton<ScanJobRunner>();
+builder.Services.AddSingleton(provider => new ScanJobRunner(
+    provider.GetRequiredService<RepositoryScanner>(),
+    provider.GetRequiredService<ScanJobStore>(),
+    provider.GetRequiredService<ILogger<ScanJobRunner>>(),
+    builder.Configuration.GetValue("Scanning:MaxParallelScans", 2)));
 builder.Services.AddHostedService(provider => provider.GetRequiredService<ScanJobRunner>());
 
 var app = builder.Build();

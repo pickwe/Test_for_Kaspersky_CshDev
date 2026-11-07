@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace VulnerabilityTracker.Services;
 
-public enum ScanStatus { Running, Completed, Failed }
+public enum ScanStatus { Queued, Running, Completed, Failed }
 
 public sealed record ScanJob(
     Guid Id,
@@ -17,23 +17,27 @@ public sealed class ScanJobStore
 
     public ScanJob Create()
     {
-        var job = new ScanJob(Guid.NewGuid(), ScanStatus.Running, DateTimeOffset.UtcNow, null, null);
+        var job = new ScanJob(Guid.NewGuid(), ScanStatus.Queued, DateTimeOffset.UtcNow, null, null);
         _jobs[job.Id] = job;
         return job;
     }
 
     public bool TryGet(Guid id, out ScanJob? job) => _jobs.TryGetValue(id, out job);
 
+    public bool Start(Guid id) => Update(id, [ScanStatus.Queued], ScanStatus.Running, null, null);
+
     public bool Complete(Guid id, IReadOnlyList<ScanFinding> findings) =>
-        Update(id, ScanStatus.Completed, findings.ToArray(), null);
+        Update(id, [ScanStatus.Running], ScanStatus.Completed, findings.ToArray(), null);
 
-    public bool Fail(Guid id, string error) => Update(id, ScanStatus.Failed, null, error);
+    public bool Fail(Guid id, string error) =>
+        Update(id, [ScanStatus.Queued, ScanStatus.Running], ScanStatus.Failed, null, error);
 
-    private bool Update(Guid id, ScanStatus status, IReadOnlyList<ScanFinding>? result, string? error)
+    private bool Update(Guid id, ScanStatus[] allowedStatuses, ScanStatus status,
+        IReadOnlyList<ScanFinding>? result, string? error)
     {
         while (_jobs.TryGetValue(id, out var current))
         {
-            if (current.Status != ScanStatus.Running)
+            if (!allowedStatuses.Contains(current.Status))
             {
                 return false;
             }
@@ -46,6 +50,7 @@ public sealed class ScanJobStore
                 Error = error
             };
 
+            // Another request may change this job first; retry with its latest state.
             if (_jobs.TryUpdate(id, updated, current))
             {
                 return true;

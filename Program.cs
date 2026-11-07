@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using VulnerabilityTracker.Contracts;
 using VulnerabilityTracker.Services;
 
@@ -12,6 +13,26 @@ builder.Services.AddSingleton<ScanJobRunner>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<ScanJobRunner>());
 
 var app = builder.Build();
+
+app.Use(async (context, next) =>
+{
+    var started = Stopwatch.GetTimestamp();
+    var statusCode = StatusCodes.Status500InternalServerError;
+
+    try
+    {
+        await next(context);
+        statusCode = context.Response.StatusCode;
+    }
+    finally
+    {
+        app.Logger.LogInformation("{Method} {Path} -> {StatusCode} in {ElapsedMs:F1} ms",
+            context.Request.Method,
+            context.Request.Path,
+            statusCode,
+            Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+    }
+});
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 

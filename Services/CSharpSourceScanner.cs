@@ -54,6 +54,39 @@ public sealed class CSharpSourceScanner
             }
         }
 
+        var formatterVariables = tree.GetRoot().DescendantNodes()
+            .OfType<VariableDeclaratorSyntax>()
+            .Where(variable => variable.Initializer?.Value is ObjectCreationExpressionSyntax creation &&
+                HasTypeName(creation.Type, "BinaryFormatter"))
+            .Select(variable => variable.Identifier.ValueText)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var invocation in tree.GetRoot().DescendantNodes().OfType<InvocationExpressionSyntax>())
+        {
+            if (invocation.Expression is not MemberAccessExpressionSyntax method ||
+                method.Name.Identifier.ValueText != "Deserialize")
+            {
+                continue;
+            }
+
+            var usesBinaryFormatter = method.Expression switch
+            {
+                ObjectCreationExpressionSyntax creation => HasTypeName(creation.Type, "BinaryFormatter"),
+                IdentifierNameSyntax name => formatterVariables.Contains(name.Identifier.ValueText),
+                _ => false
+            };
+
+            if (usesBinaryFormatter)
+            {
+                var lineNumber = invocation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                findings.Add(new ScanFinding(
+                    "SERIAL001",
+                    "BinaryFormatter.Deserialize can process unsafe input.",
+                    filePath,
+                    lineNumber));
+            }
+        }
+
         return findings;
     }
 

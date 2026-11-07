@@ -136,4 +136,45 @@ public sealed class CSharpSourceScannerTests
 
         Assert.AreEqual(0, findings.Count);
     }
+
+    [TestMethod]
+    public void FindsDeserializeOnBinaryFormatterVariable()
+    {
+        const string source = """
+            var formatter = new BinaryFormatter();
+            var value = formatter.Deserialize(stream);
+            """;
+
+        var findings = new CSharpSourceScanner().Scan("Import.cs", source);
+
+        Assert.AreEqual(1, findings.Count);
+        Assert.AreEqual(new ScanFinding(
+            "SERIAL001", "BinaryFormatter.Deserialize can process unsafe input.",
+            "Import.cs", 2), findings[0]);
+    }
+
+    [TestMethod]
+    public void FindsDeserializeOnDirectFullyQualifiedConstruction()
+    {
+        const string source = "new System.Runtime.Serialization.Formatters.Binary.BinaryFormatter().Deserialize(stream);";
+
+        var findings = new CSharpSourceScanner().Scan("LegacyImport.cs", source);
+
+        Assert.AreEqual(1, findings.Count);
+        Assert.AreEqual("SERIAL001", findings[0].RuleId);
+    }
+
+    [TestMethod]
+    public void IgnoresOtherDeserializersAndTextMentions()
+    {
+        const string source = """
+            // new BinaryFormatter().Deserialize(stream);
+            var example = "formatter.Deserialize(stream)";
+            var value = JsonSerializer.Deserialize<Data>(json);
+            """;
+
+        var findings = new CSharpSourceScanner().Scan("SafeImport.cs", source);
+
+        Assert.AreEqual(0, findings.Count);
+    }
 }
